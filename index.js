@@ -1,39 +1,119 @@
-// ==UserScript==
-// @name         CodeBlock Re-render Trigger (TavernHelper)
-// @version      0.4
-// @description  Detect DOM swaps that remove rendered front-end code iframes and trigger the renderer again (only uses JS, no Vue/TS edits). Drop into a userscript manager or run in console.
-// @author       secr2th (adapted)
-// @match        *://*/*
-// @grant        none
-// ==/UserScript==
-
 (function () {
-  'use strict';
+    'use strict';
 
-  // CONFIG
-  const DEBUG = false;
-  const DEBOUNCE_MS = 120; // per-message debounce
-  const CHAT_SELECTOR = '#chat'; // primary chat container selector (fallbacks applied)
-  const MESSAGE_SELECTOR = '.mes';
-  const MESSAGE_TEXT_SELECTOR = '.mes_text';
-  const FRONTEND_MARKERS = ['html>', '<head>', '<body']; // used to detect frontend code
+    const EXTENSION_NAME = 'CodeBlock-Render-Fixer-v3';
+    const DEBUG = true; 
 
-  function log(...args) {
-    if (DEBUG) console.log('[CodeBlock Re-render]', ...args);
-  }
+    function log(...args) {
+        if (DEBUG) console.log('[' + EXTENSION_NAME + ']', ...args);
+    }
 
-  function isFrontend(content) {
-    if (!content) return false;
-    content = content.toLowerCase();
-    return FRONTEND_MARKERS.some(tag => content.includes(tag));
-  }
+    // 프론트엔드 코드인지 확인 (Iframe.vue의 로직과 일치시킴)
+    function isFrontend(content) {
+        return ['html>', '<head>', '<body'].some(tag => content.includes(tag));
+    }
 
-  // Helpers to detect whether a pre is already rendered into TH-render with an iframe
-  function isPreRendered(preEl) {
-    if (!preEl) return false;
-    const parent = preEl.parentElement;
-    if (!parent) return false;
-    if (parent.classList.contains('TH-render')) {
+    // 1. 메시지 아이디를 가져오는 유틸리티
+    function getMessageId(el) {
+        const mesEl = el.closest('.mes');
+        return mesEl ? mesEl.getAttribute('mesid') : null;
+    }
+
+    // 2. 핵심 함수: TavernHelper의 이벤트를 이용해 해당 메시지만 '부분 재렌더링'
+    function triggerPartialRender(mesTextEl) {
+        const messageId = getMessageId(mesTextEl);
+        if (!messageId) return;
+
+        log('Triggering partial render for message:', messageId);
+
+        // [중요] refreshOneMessage(전체 새로고침) 대신 
+        // SillyTavern의 MESSAGE_UPDATED 이벤트를 발생시켜 
+        // 현재 DOM에 있는 텍스트(번역본)를 기반으로 확장 기능이 다시 붙게 만듭니다.
+        if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
+            // 서버에 요청하지 않고, 이미 로드된 데이터 안에서 렌더링만 다시 수행하도록 유도
+            eventSource.emit(event_types.MESSAGE_UPDATED, Number(messageId));
+        }
+    }
+
+    function setupObservers() {
+        const chatEl = document.getElementById('chat');
+        if (!chatEl) {
+            setTimeout(setupObservers, 1000);
+            return;
+        }
+
+        const observedElements = new WeakSet();
+        const debounceTimers = {};
+
+        function observeMesText(mesTextEl) {
+            if (observedElements.has(mesTextEl)) return;
+            observedElements.has(mesTextEl);
+
+            const observer = new MutationObserver((mutations) => {
+                // 번역기 등에 의해 내용이 변했는지 확인
+                let shouldRender = false;
+                
+                for (const mutation of mutations) {
+                    // 1. TH-render(iframe 감싸는거)가 사라졌거나
+                    // 2. 내부 텍스트가 대량으로 바뀌었을 때
+                    if (mutation.removedNodes.length > 0) {
+                        mutation.removedNodes.forEach(node => {
+                            if (node.nodeType === Node.ELEMENT_NODE && 
+                                (node.classList?.contains('TH-render') || node.querySelector?.('.TH-render'))) {
+                                shouldRender = true;
+                            }
+                        });
+                    }
+                }
+
+                if (!shouldRender) return;
+
+                const messageId = getMessageId(mesTextEl);
+                if (!messageId) return;
+
+                // 디바운스로 번역이 완전히 끝날 때까지 대기 (600ms)
+                if (debounceTimers[messageId]) clearTimeout(debounceTimers[messageId]);
+                debounceTimers[messageId] = setTimeout(() => {
+                    // 이미 iframe이 잘 있으면 패스
+                    if (mesTextEl.querySelector('iframe')) return;
+
+                    // 프론트엔드 코드가 포함되어 있는지 최종 확인
+                    const code = mesTextEl.querySelector('pre')?.textContent || '';
+                    if (isFrontend(code)) {
+                        log('Inconsistency detected. Re-applying Vue component...');
+                        triggerPartialRender(mesTextEl);
+                    }
+                }, 600);
+            });
+
+            observer.observe(mesTextEl, { childList: true, subtree: true });
+        }
+
+        // 초기 로드된 메시지들 감시
+        chatEl.querySelectorAll('.mes .mes_text').forEach(observeMesText);
+
+        // 새로 추가되는 메시지들 감시
+        const chatObserver = new MutationObserver((mutations) => {
+            mutations.forEach(mutation => {
+                mutation.addedNodes.forEach(node => {
+                    if (node.nodeType === Node.ELEMENT_NODE && node.classList?.contains('mes')) {
+                        const mesText = node.querySelector('.mes_text');
+                        if (mesText) observeMesText(mesText);
+                    }
+                });
+            });
+        });
+
+        chatObserver.observe(chatEl, { childList: true });
+    }
+
+    // 초기화 실행
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupObservers);
+    } else {
+        setupObservers();
+    }
+})();
       return !!parent.querySelector('iframe');
     }
     return false;
