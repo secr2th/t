@@ -1,0 +1,12 @@
+{
+  "display_name": "meow",
+  "loading_order": 101,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "",
+  "author": "User",
+  "version": "1.0.0",
+  "homePage": "https://github.com/secr2th/t,
+  "auto_update": false
+}
