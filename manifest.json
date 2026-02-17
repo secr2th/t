@@ -1,6 +1,6 @@
 {
-  "display_name": "meow",
-  "loading_order": 101,
+  "display_name": "t",
+  "loading_order": 105,
   "requires": [],
   "optional": [],
   "js": "index.js",
